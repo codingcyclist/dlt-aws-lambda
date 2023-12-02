@@ -1,0 +1,2 @@
+aws_lambda_powertools==2.28.1
+dlt[snowflake]==0.3.25
