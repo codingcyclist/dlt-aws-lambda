@@ -68,7 +68,19 @@ All examples inside the `/examples` folder use AWS SAM to deploy DLT inside an A
     
 4. Deploy your resources to AWS
     ```
-    sam deploy --stack-name=<your-stack-name> --resolve-image-repos --resolve-s3
+    sam deploy --stack-name=<your-stack-name> --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
+
+   > ------------------------------------------------------------------------------------------------
+   > Outputs
+   > ------------------------------------------------------------------------------------------------
+   > Key                 ApiGateway                                                                                                        
+   > Description         API Gateway endpoint URL for Staging stage for Hello World function                                               
+   > Value               https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect/                                             
+   > ------------------------------------------------------------------------------------------------
     ```
 
+5. Invoke your deployed Lambda function
+    ```
+    curl -X POST https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect -d '{"hello":"world"}'
+    ```
 ## C
