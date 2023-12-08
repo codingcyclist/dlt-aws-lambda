@@ -83,4 +83,3 @@ All examples inside the `/examples` folder use AWS SAM to deploy DLT inside an A
     ```
     curl -X POST https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect -d '{"hello":"world"}'
     ```
-## C

@@ -27,7 +27,6 @@ def lambda_handler(
     if not event.body:
         return {"statusCode": 204, "body": "No content", "isBase64Encoded": False}
 
-    dlt.config["load.workers"] = 1
     p = dlt.pipeline(
         pipeline_name="lambda",
         dataset_name="lambda",
