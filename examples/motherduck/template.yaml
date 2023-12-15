@@ -25,7 +25,6 @@ Resources:
           DLT_PROJECT_DIR: "/tmp" # the only writeable directory on a lambda
           DLT_DATA_DIR: "/tmp" # the only writeable directory on a lambda
           DLT_PIPELINE_DIR: "/tmp" # the only writeable directory on a lambda
-          LOAD__WORKERS: 1 # AWS Lambda cannot do multiprocessing
     Metadata:
       DockerTag: dlt-aws
       DockerContext: .
