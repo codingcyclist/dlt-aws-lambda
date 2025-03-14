@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  DestinationBucket:
+    Type: String
+    Default: "dlt-athena-test-bucket"
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayAccessLogs.Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp",
+          "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","routeKey":"$context.routeKey",
+          "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength"
+          }'
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: "Dlt Athena Test Loader HTTP API"
+          version: "2023-06-25 17:32:29UTC"
+        paths:
+          /collect:
+            post:
+              responses:
+                default:
+                  description: "Response for POST /"
+              x-amazon-apigateway-integration:
+                type: "aws_proxy"
+                integrationSubtype: "SQS-SendMessage"
+                credentials: !GetAtt ApiGatewayRole.Arn
+                connectionType: "INTERNET"
+                payloadFormatVersion: "1.0"
+                requestParameters:
+                  MessageBody: "$request.body"
+                  QueueUrl:
+                    Ref: BufferQueue
+
+        x-amazon-apigateway-cors:
+          allowMethods:
+            - "*"
+          maxAge: 0
+          allowCredentials: false
+          allowOrigins:
+            - "*"
+        x-amazon-apigateway-importexport-version: "1.0"
+
+  ApiGatewayAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: dlt-athena-api-gateway-access-logs
+      RetentionInDays: 1
+
+
+  ApiGatewayRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: dlt-athena-api-gateway-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:SendMessageBatch"
+                Resource: !GetAtt BufferQueue.Arn
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:DescribeLogGroups"
+                  - "logs:DescribeLogStreams"
+                  - "logs:PutLogEvents"
+                  - "logs:GetLogEvents"
+                  - "logs:FilterLogEvents"
+                Resource: !GetAtt ApiGatewayAccessLogs.Arn
+
+  BufferQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: dlt-athena-buffer-queue
+      SqsManagedSseEnabled: true
+
+  DltDataStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DestinationBucket
+
+  DltFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+      DockerTag: latest
+      DockerBuildTarget: runner
+    Properties:
+      FunctionName: dlt-athena-test-loader
+      PackageType: Image
+      Timeout: 30 # default is 3 seconds, which is usually too little
+      MemorySize: 512 # default is 128mb, which is too little
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BufferQueue.Arn
+            BatchSize: 10000 # default is 10 max is 10000. Batch size is bound by 6mb
+            MaximumBatchingWindowInSeconds: 60 # seconds
+            ScalingConfig:
+              MaximumConcurrency: 100 # minimum is 2, max is 1000
+      Environment:
+        Variables:
+          DLT_PROJECT_DIR: "/tmp" # the only writeable directory on a lambda
+          DLT_DATA_DIR: "/tmp" # the only writeable directory on a lambda
+          DLT_PIPELINE_DIR: "/tmp" # the only writeable directory on a lambda
+          DESTINATION_BUCKET: !Sub s3://${DestinationBucket}
+      Policies:
+        - Statement:
+            - Sid: AllowDLTSecretAccess
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:DLT_*
+            - Sid: AllowSQSAccess
+              Effect: Allow
+              Action:
+                - "sqs:ReceiveMessage"
+                - "sqs:DeleteMessage"
+                - "sqs:GetQueueAttributes"
+              Resource: !GetAtt BufferQueue.Arn
+            - Sid: DestinationBucketFullAccess
+              Effect: Allow
+              Action:
+                - "s3:*"
+              Resource:
+                - !GetAtt DltDataStorageBucket.Arn
+                - !Sub ${DltDataStorageBucket.Arn}/*
+            - Sid: AllowAthenaAccess
+              Effect: Allow
+              Action:
+                - "athena:StartQueryExecution"
+                - "athena:GetQueryExecution"
+                - "athena:GetQueryResults"
+              Resource: "*"
+            - Sid: AllowGlueCatalogAccess
+              Effect: Allow
+              Action:
+                - "glue:CreateDatabase"
+                - "glue:GetDatabase"
+                - "glue:GetDatabases"
+                - "glue:CreateTable"
+                - "glue:GetTables"
+                - "glue:GetTable"
+                - "glue:UpdateTable"
+              Resource:
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*
+  
+  DltFunctionLogs:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DltFunction}"
+      RetentionInDays: 30
+
+Outputs:
+  HttpApiEndpoint:
+    Description: "Http API endpoint"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/collect"
+
