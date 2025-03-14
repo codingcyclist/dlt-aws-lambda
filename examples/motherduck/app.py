@@ -10,6 +10,7 @@ from aws_lambda_powertools.utilities.data_classes import (
 )
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from botocore.config import Config
+from dlt.destinations.impl.motherduck.factory import motherduck
 
 ASM_PROVIDER = parameters.SecretsProvider(
     Config(
@@ -30,11 +31,12 @@ def lambda_handler(
     p = dlt.pipeline(
         pipeline_name="lambda",
         dataset_name="lambda",
-        destination="motherduck",
+        destination=motherduck(
+            credentials=ASM_PROVIDER.get("DLT_MOTHERDUCK_CREDENTIALS", transform="json")
+        ),
         progress="log",
-        credentials=ASM_PROVIDER.get("DLT_MOTHERDUCK_CREDENTIALS", transform="json"),
     )
     data = [json.loads(event.body)]
-    load_info = p.run(data, table_name="raw")
+    _ = p.run(data, table_name="raw")
 
     return {"statusCode": 200, "body": "Success", "isBase64Encoded": False}

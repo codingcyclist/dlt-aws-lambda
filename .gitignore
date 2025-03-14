@@ -1,3 +1,5 @@
 .aws-sam
 .mypy_cache
 .DS_Store
+__pycache__
+credentials.json

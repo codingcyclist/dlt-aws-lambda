@@ -9,6 +9,11 @@ Resources:
       StageName: v1
   DltFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+      DockerTag: latest
+      DockerBuildTarget: runner
     Properties:
       PackageType: Image
       Timeout: 30 # default is 3 seconds, which is usually too little
