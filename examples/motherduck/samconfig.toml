@@ -1,0 +1,17 @@
+version = 0.1
+
+[default]
+[default.global]
+[default.global.parameters]
+stack_name = "dlt-sqs-athena-test"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+resolve_image_repos = true
+

@@ -3,6 +3,8 @@ import os
 import typing as t
 
 import dlt
+from aws_lambda_powertools.logging import Logger
+from aws_lambda_powertools.tracing import Tracer
 from aws_lambda_powertools.utilities import parameters
 from aws_lambda_powertools.utilities.data_classes import (
     APIGatewayProxyEventV2,
@@ -20,7 +22,12 @@ ASM_PROVIDER = parameters.SecretsProvider(
     )
 )
 
+logger = Logger()
+tracer = Tracer()
 
+
+@logger.inject_lambda_context(clear_state=True)
+@tracer.capture_lambda_handler
 @event_source(data_class=APIGatewayProxyEventV2)
 def lambda_handler(
     event: APIGatewayProxyEventV2, context: LambdaContext

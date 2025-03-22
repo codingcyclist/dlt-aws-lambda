@@ -10,6 +10,7 @@ python = ">=3.12,<3.13"
 dlt = {version = "=1.3.0", extras = ["snowflake", "s3"]}
 aws-lambda-powertools = "^2.42.0"
 boto3 = "^1.34.152"
+aws-xray-sdk = "^2.14.0"
 
 
 [tool.poetry.group.dev.dependencies]

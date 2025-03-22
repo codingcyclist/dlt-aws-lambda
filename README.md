@@ -117,8 +117,7 @@ This more sophisticated example on how to use DLT with AWS Lambda to load larger
 3. Deploy your resources to AWS
 
    ```
-   sam deploy --stack-name=<your-stack-name> --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
-
+   sam deploy
    > ------------------------------------------------------------------------------------------------
    > Outputs
    > ------------------------------------------------------------------------------------------------

@@ -4,7 +4,7 @@ Transform: AWS::Serverless-2016-10-31
 Parameters:
   DestinationBucket:
     Type: String
-    Default: "dlt-athena-test-bucket"
+    Default: "dlt-sqs-athena-test-bucket"
 
 Resources:
   HttpApi:
@@ -19,7 +19,7 @@ Resources:
       DefinitionBody:
         openapi: "3.0.1"
         info:
-          title: "Dlt Athena Test Loader HTTP API"
+          title: "Dlt SQS Athena Test Loader HTTP API"
           version: "2023-06-25 17:32:29UTC"
         paths:
           /collect:
@@ -50,7 +50,7 @@ Resources:
   ApiGatewayAccessLogs:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: dlt-athena-api-gateway-access-logs
+      LogGroupName: dlt-sqs-athena-api-gateway-access-logs
       RetentionInDays: 1
 
 
@@ -67,7 +67,7 @@ Resources:
             Action:
               - "sts:AssumeRole"
       Policies:
-        - PolicyName: dlt-athena-api-gateway-policy
+        - PolicyName: dlt-sqs-athena-api-gateway-policy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -91,9 +91,9 @@ Resources:
   BufferQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: dlt-athena-buffer-queue
+      QueueName: dlt-sqs-athena-buffer-queue
       SqsManagedSseEnabled: true
-
+      VisibilityTimeout: 60 # has to be at least as long as the lambda timeout
   DltDataStorageBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -107,9 +107,9 @@ Resources:
       DockerTag: latest
       DockerBuildTarget: runner
     Properties:
-      FunctionName: dlt-athena-test-loader
+      FunctionName: dlt-sqs-athena-test-loader
       PackageType: Image
-      Timeout: 30 # default is 3 seconds, which is usually too little
+      Timeout: 60 # default is 3 seconds, which is usually too little
       MemorySize: 512 # default is 128mb, which is too little
       Events:
         SQSEvent:
@@ -119,7 +119,7 @@ Resources:
             BatchSize: 10000 # default is 10 max is 10000. Batch size is bound by 6mb
             MaximumBatchingWindowInSeconds: 60 # seconds
             ScalingConfig:
-              MaximumConcurrency: 100 # minimum is 2, max is 1000
+              MaximumConcurrency: 2 # minimum is 2, max is 1000
       Environment:
         Variables:
           DLT_PROJECT_DIR: "/tmp" # the only writeable directory on a lambda
@@ -164,6 +164,7 @@ Resources:
                 - "glue:GetTables"
                 - "glue:GetTable"
                 - "glue:UpdateTable"
+                - "glue:GetPartitions"
               Resource:
                 - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
                 - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*
@@ -174,6 +175,287 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${DltFunction}"
       RetentionInDays: 30
+
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: DltSQSAthenaMonitoringDashboard
+      DashboardBody: !Sub |
+          {
+            "widgets":[
+                {
+                  "type":"text",
+                  "x":0,
+                  "y":0,
+                  "properties":{
+                      "markdown":"# API Gateway"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":0,
+                  "y":1,
+                  "properties":{
+                      "title":"Requests / Minute",
+                      "metrics":[
+                        [
+                            "AWS/ApiGateway",
+                            "Count",
+                            "ApiId",
+                            "${HttpApi}",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":0,
+                  "y":2,
+                  "properties":{
+                      "title":"Errors / Minute",
+                      "metrics":[
+                        [
+                            "AWS/ApiGateway",
+                            "4xx",
+                            "ApiId",
+                            "${HttpApi}",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ],
+                        [
+                            ".",
+                            "5xx",
+                            ".",
+                            ".",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":true,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":0,
+                  "y":3,
+                  "properties":{
+                      "title":"Latency",
+                      "metrics":[
+                        [
+                            "AWS/ApiGateway",
+                            "IntegrationLatency",
+                            "ApiId",
+                            "${HttpApi}",
+                            {
+                              "stat":"Average",
+                              "period":60
+                            }
+                        ],
+                        [
+                            ".",
+                            "Latency",
+                            ".",
+                            ".",
+                            {
+                              "stat":"Average",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"text",
+                  "x":6,
+                  "y":0,
+                  "properties":{
+                      "markdown":"# SQS Buffer Queue"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":6,
+                  "y":1,
+                  "properties":{
+                      "title":"Throughput",
+                      "metrics":[
+                        [
+                            "AWS/SQS",
+                            "NumberOfMessagesSent",
+                            "QueueName",
+                            "${BufferQueue.QueueName}",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ],
+                        [
+                            ".",
+                            "NumberOfMessagesReceived",
+                            ".",
+                            ".",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":true,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":6,
+                  "y":2,
+                  "properties":{
+                      "title":"Queue Pressure",
+                      "metrics":[
+                        [
+                            "AWS/SQS",
+                            "ApproximateAgeOfOldestMessage",
+                            "QueueName",
+                            "${BufferQueue.QueueName}",
+                            {
+                              "stat":"Maximum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":6,
+                  "y":3,
+                  "properties":{
+                      "title":"Payload Size",
+                      "metrics":[
+                        [
+                            "AWS/SQS",
+                            "SentMessageSize",
+                            "QueueName",
+                            "${BufferQueue.QueueName}",
+                            {
+                              "stat":"Average",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"text",
+                  "x":12,
+                  "y":0,
+                  "properties":{
+                      "markdown":"# DLT Lambda Function"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":12,
+                  "y":1,
+                  "properties":{
+                      "title":"Invocations",
+                      "metrics":[
+                        [
+                            "AWS/Lambda",
+                            "Invocations",
+                            "FunctionName",
+                            "${DltFunction}",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ],
+                        [
+                            ".",
+                            "Errors",
+                            ".",
+                            ".",
+                            {
+                              "stat":"Sum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":true,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":12,
+                  "y":2,
+                  "properties":{
+                      "title":"Concurrency",
+                      "metrics":[
+                        [
+                            "AWS/Lambda",
+                            "ConcurrentExecutions",
+                            "FunctionName",
+                            "${DltFunction}",
+                            {
+                              "stat":"Maximum",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                },
+                {
+                  "type":"metric",
+                  "x":12,
+                  "y":3,
+                  "properties":{
+                      "title":"Latency",
+                      "metrics":[
+                        [
+                            "AWS/Lambda",
+                            "Duration",
+                            "FunctionName",
+                            "${DltFunction}",
+                            {
+                              "stat":"Average",
+                              "period":60
+                            }
+                        ]
+                      ],
+                      "view":"timeSeries",
+                      "stacked":false,
+                      "region":"${AWS::Region}"
+                  }
+                }
+            ]
+          }
 
 Outputs:
   HttpApiEndpoint:

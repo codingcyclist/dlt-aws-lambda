@@ -48,7 +48,7 @@ def lambda_handler(event: SQSEvent, context: LambdaContext) -> t.Dict[str, t.Any
         progress="log",
     )
 
-    @dlt.resource(table_name="raw")
+    @dlt.resource(table_name="raw", write_disposition="append")
     def resource():
         count = 0
         for record in event.records:
