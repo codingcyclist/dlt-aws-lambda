@@ -81,13 +81,13 @@ These are two simple examples of how to use DLT with AWS Lambda to load events s
 4. Deploy your resources to AWS
 
    ```
-   sam deploy --stack-name=<your-stack-name> --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
+   sam deploy
 
    > ------------------------------------------------------------------------------------------------
    > Outputs
    > ------------------------------------------------------------------------------------------------
    > Key                 ApiGateway
-   > Description         API Gateway endpoint URL for Staging stage for Hello World function
+   > Description         API Gateway endpoint URL for dlt-snowflake-test-loader Lambda function
    > Value               https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect/
    > ------------------------------------------------------------------------------------------------
    ```
@@ -98,11 +98,11 @@ These are two simple examples of how to use DLT with AWS Lambda to load events s
    curl -X POST https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect -d '{"hello":"world"}'
    ```
 
-### SQS-Athena Example
+### SQS-Athena and SQS-Snowflake Examples
 
-This more sophisticated example on how to use DLT with AWS Lambda to load larger volumes of events sent to an API Gateway endpoint into a data lake (AWS Athena). What makes this example more scalable is that it uses a buffer queue to decouple the API Gateway from the Lambda function and load events in batches. It also leverages AWS Athena + AWS Glue to de-couple storage from compute, which is an additional leaver to reduce costs.
+These examples are more sophisticated on how to use DLT with AWS Lambda to load larger volumes of events sent to an API Gateway endpoint into a data lake (AWS Athena/Snowflake). What makes this example more scalable is that it uses a buffer queue to decouple the API Gateway from the Lambda function and load events in batches. The SQS-Athena example also leverages AWS Athena + AWS Glue to de-couple storage from compute, which is an additional leaver to reduce costs.
 
-> Given the SQS queue, this example cannot be tested locally.
+> Given the SQS queue, these examples cannot be tested locally.
 
 1. Install the SAM CLI
    ```bash
@@ -122,12 +122,12 @@ This more sophisticated example on how to use DLT with AWS Lambda to load larger
    > Outputs
    > ------------------------------------------------------------------------------------------------
    > Key                 ApiGateway
-   > Description         API Gateway endpoint URL for Staging stage for Hello World function
-   > Value               https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect/
+   > Description         Http API endpoint for dlt-sqs-athena-test-loader Lambda function
+   > Value               https://pepl550twj.execute-api.eu-central-1.amazonaws.com/collect
    > ------------------------------------------------------------------------------------------------
    ```
 
 4. Invoke your deployed Lambda function
    ```
-   curl -X POST https://ykvypgnm7g.execute-api.eu-central-1.amazonaws.com/v1/collect -d '{"hello":"world"}'
+   curl -X POST https://pepl550twj.execute-api.eu-central-1.amazonaws.com/collect -d '{"id":"world"}'
    ```

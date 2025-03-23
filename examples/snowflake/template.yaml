@@ -5,8 +5,11 @@ Resources:
   ApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: DLT Api Gateway
+      Name: Dlt Snowflake Test Loader REST API
       StageName: v1
+      Tags:
+        stackName: !Ref AWS::StackName
+
   DltFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -16,10 +19,11 @@ Resources:
       DockerBuildTarget: runner
     Properties:
       PackageType: Image
+      FunctionName: dlt-snowflake-test-loader
       Timeout: 30 # default is 3 seconds, which is usually too little
       MemorySize: 512 # default is 128mb, which is too little
       Events:
-        HelloWorldApi:
+        CollectApi:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -37,12 +41,19 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:DLT_*
+      Tags:
+        stackName: !Ref AWS::StackName
+  
+  DltFunctionLogs:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DltFunction}"
+      RetentionInDays: 30
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
 
-    Metadata:
-      DockerTag: dlt-aws
-      DockerContext: .
-      Dockerfile: Dockerfile
 Outputs:
   ApiGateway:
-    Description: "API Gateway endpoint URL for Staging stage for Hello World function"
+    Description: !Sub "API Gateway endpoint URL for dlt-snowflake-test-loader Lambda function"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/v1/collect/"

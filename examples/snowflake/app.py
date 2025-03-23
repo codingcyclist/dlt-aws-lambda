@@ -40,6 +40,7 @@ def lambda_handler(
         dataset_name="lambda",
         destination=snowflake(
             credentials=ASM_PROVIDER.get("DLT_SNOWFLAKE_CREDENTIALS", transform="json"),
+            query_tag='{{"source":"{source}", "resource":"{resource}", "table": "{table}", "load_id":"{load_id}", "pipeline_name":"{pipeline_name}"}}',
         ),
         progress="log",
     )

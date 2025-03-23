@@ -5,8 +5,11 @@ Resources:
   ApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: DLT Api Gateway
+      Name: Dlt Motherduck Test Loader REST API
       StageName: v1
+      Tags:
+        stackName: !Ref AWS::StackName
+
   DltFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -16,10 +19,11 @@ Resources:
       DockerBuildTarget: runner
     Properties:
       PackageType: Image
+      FunctionName: dlt-motherduck-test-loader
       Timeout: 30 # default is 3 seconds, which is usually too little
       MemorySize: 512 # default is 128mb, which is too little
       Events:
-        HelloWorldApi:
+        CollectApi:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -30,11 +34,19 @@ Resources:
           DLT_PROJECT_DIR: "/tmp" # the only writeable directory on a lambda
           DLT_DATA_DIR: "/tmp" # the only writeable directory on a lambda
           DLT_PIPELINE_DIR: "/tmp" # the only writeable directory on a lambda
-    Metadata:
-      DockerTag: dlt-aws
-      DockerContext: .
-      Dockerfile: Dockerfile
+      Tags:
+        stackName: !Ref AWS::StackName
+
+  DltFunctionLogs:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DltFunction}"
+      RetentionInDays: 30
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
+
 Outputs:
   ApiGateway:
-    Description: "API Gateway endpoint URL for Staging stage for Hello World function"
+    Description: !Sub "API Gateway endpoint URL for dlt-motherduck-test-loader Lambda function"
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/v1/collect/"

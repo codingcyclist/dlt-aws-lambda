@@ -3,7 +3,7 @@ version = 0.1
 [default]
 [default.global]
 [default.global.parameters]
-stack_name = "dlt-sqs-athena-test"
+stack_name = "dlt-snowflake-test"
 
 [default.build.parameters]
 cached = true
