@@ -1,0 +1,605 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  DestinationBucket:
+    Type: String
+    Default: "dlt-sqs-snowflake-test-bucket"
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayAccessLogs.Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp",
+          "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","routeKey":"$context.routeKey",
+          "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength"
+          }'
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: "Dlt SQS Snowflake Test Loader HTTP API"
+          version: "2023-06-25 17:32:29UTC"
+        paths:
+          /collect:
+            post:
+              responses:
+                default:
+                  description: "Response for POST /"
+              x-amazon-apigateway-integration:
+                type: "aws_proxy"
+                integrationSubtype: "SQS-SendMessage"
+                credentials: !GetAtt ApiGatewayRole.Arn
+                connectionType: "INTERNET"
+                payloadFormatVersion: "1.0"
+                requestParameters:
+                  MessageBody: "$request.body"
+                  QueueUrl:
+                    Ref: BufferQueue
+
+        x-amazon-apigateway-cors:
+          allowMethods:
+            - "*"
+          maxAge: 0
+          allowCredentials: false
+          allowOrigins:
+            - "*"
+        x-amazon-apigateway-importexport-version: "1.0"
+      Tags:
+        stackName: !Ref AWS::StackName
+        taktile:environment: !Sub analytics-${AWS::StackName}
+
+  ApiGatewayAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: dlt-sqs-snowflake-api-gateway-access-logs
+      RetentionInDays: 1
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
+        - Key: taktile:environment
+          Value: !Sub analytics-${AWS::StackName}
+
+  ApiGatewayRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: dlt-sqs-snowflake-api-gateway-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:SendMessageBatch"
+                Resource: !GetAtt BufferQueue.Arn
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:DescribeLogGroups"
+                  - "logs:DescribeLogStreams"
+                  - "logs:PutLogEvents"
+                  - "logs:GetLogEvents"
+                  - "logs:FilterLogEvents"
+                Resource: !GetAtt ApiGatewayAccessLogs.Arn
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
+        - Key: taktile:environment
+          Value: !Sub analytics-${AWS::StackName}
+
+  BufferQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: dlt-sqs-snowflake-buffer-queue
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 60 # has to be at least as long as the lambda timeout
+  DltDataStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DestinationBucket
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
+        - Key: taktile:environment
+          Value: !Sub analytics-${AWS::StackName}
+
+  DltFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+      DockerTag: latest
+      DockerBuildTarget: runner
+    Properties:
+      FunctionName: dlt-sqs-snowflake-test-loader
+      PackageType: Image
+      Timeout: 60 # default is 3 seconds, which is usually too little
+      MemorySize: 512 # default is 128mb, which is too little
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BufferQueue.Arn
+            BatchSize: 10000 # default is 10 max is 10000. Batch size is bound by 6mb
+            MaximumBatchingWindowInSeconds: 60 # seconds
+            ScalingConfig:
+              MaximumConcurrency: 2 # minimum is 2, max is 1000
+      Environment:
+        Variables:
+          DLT_PROJECT_DIR: "/tmp" # the only writeable directory on a lambda
+          DLT_DATA_DIR: "/tmp" # the only writeable directory on a lambda
+          DLT_PIPELINE_DIR: "/tmp" # the only writeable directory on a lambda
+          DESTINATION_BUCKET: !Sub s3://${DestinationBucket}
+      Policies:
+        - Statement:
+            - Sid: AllowDLTSecretAccess
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:DLT_*
+            - Sid: AllowSQSAccess
+              Effect: Allow
+              Action:
+                - "sqs:ReceiveMessage"
+                - "sqs:DeleteMessage"
+                - "sqs:GetQueueAttributes"
+              Resource: !GetAtt BufferQueue.Arn
+            - Sid: DestinationBucketFullAccess
+              Effect: Allow
+              Action:
+                - "s3:*"
+              Resource:
+                - !GetAtt DltDataStorageBucket.Arn
+                - !Sub ${DltDataStorageBucket.Arn}/*
+            - Sid: AllowAthenaAccess
+              Effect: Allow
+              Action:
+                - "athena:StartQueryExecution"
+                - "athena:GetQueryExecution"
+                - "athena:GetQueryResults"
+              Resource: "*"
+            - Sid: AllowGlueCatalogAccess
+              Effect: Allow
+              Action:
+                - "glue:CreateDatabase"
+                - "glue:GetDatabase"
+                - "glue:GetDatabases"
+                - "glue:CreateTable"
+                - "glue:GetTables"
+                - "glue:GetTable"
+                - "glue:UpdateTable"
+                - "glue:GetPartitions"
+              Resource:
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*
+      Tags:
+        stackName: !Ref AWS::StackName
+        taktile:environment: !Sub analytics-${AWS::StackName}
+
+  DltFunctionLogs:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DltFunction}"
+      RetentionInDays: 30
+      Tags:
+        - Key: stackName
+          Value: !Ref AWS::StackName
+        - Key: taktile:environment
+          Value: !Sub analytics-${AWS::StackName}
+
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: DltSQSSnowflakeMonitoringDashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "height": 2,
+              "width": 6,
+              "y": 0,
+              "x": 0,
+              "type": "text",
+              "properties": {
+                "markdown": "# API Gateway"
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 2,
+              "x": 0,
+              "type": "metric",
+              "properties": {
+                "title": "Load",
+                "metrics": [
+                  [
+                    "AWS/ApiGateway",
+                    "Count",
+                    "ApiId",
+                    "${HttpApi}",
+                    {
+                      "stat": "Sum",
+                      "period": 60,
+                      "region": "eu-central-1"
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "showUnits": false,
+                    "label": "Requests/min",
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 14,
+              "x": 0,
+              "type": "metric",
+              "properties": {
+                "title": "Errors / Minute",
+                "metrics": [
+                  [
+                    "AWS/ApiGateway",
+                    "4xx",
+                    "ApiId",
+                    "${HttpApi}",
+                    {
+                      "stat": "Sum",
+                      "period": 60
+                    }
+                  ],
+                  [
+                    ".",
+                    "5xx",
+                    ".",
+                    ".",
+                    {
+                      "stat": "Sum",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": true,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 8,
+              "x": 0,
+              "type": "metric",
+              "properties": {
+                "title": "Latency",
+                "metrics": [
+                  [
+                    "AWS/ApiGateway",
+                    "IntegrationLatency",
+                    "ApiId",
+                    "${HttpApi}",
+                    {
+                      "stat": "Average",
+                      "period": 60
+                    }
+                  ],
+                  [
+                    ".",
+                    "Latency",
+                    ".",
+                    ".",
+                    {
+                      "stat": "Average",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 2,
+              "width": 6,
+              "y": 0,
+              "x": 6,
+              "type": "text",
+              "properties": {
+                "markdown": "# SQS Buffer Queue"
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 2,
+              "x": 6,
+              "type": "metric",
+              "properties": {
+                "title": "Buffer Throughput",
+                "metrics": [
+                  [
+                    "AWS/SQS",
+                    "NumberOfMessagesSent",
+                    "QueueName",
+                    "${BufferQueue.QueueName}",
+                    {
+                      "stat": "Sum",
+                      "period": 60,
+                      "region": "eu-central-1"
+                    }
+                  ],
+                  [
+                    ".",
+                    "NumberOfMessagesReceived",
+                    ".",
+                    ".",
+                    {
+                      "stat": "Sum",
+                      "period": 60,
+                      "region": "eu-central-1"
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": true,
+                "region": "eu-central-1",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Reqests/min",
+                    "showUnits": false,
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 8,
+              "x": 6,
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [
+                    {
+                      "expression": "METRICS()/60",
+                      "label": "ApproximateAgeOfOldestMessage",
+                      "id": "e1",
+                      "region": "eu-central-1"
+                    }
+                  ],
+                  [
+                    "AWS/SQS",
+                    "ApproximateAgeOfOldestMessage",
+                    "QueueName",
+                    "${BufferQueue.QueueName}",
+                    {
+                      "stat": "Maximum",
+                      "period": 60,
+                      "region": "eu-central-1",
+                      "id": "m1",
+                      "visible": false
+                    }
+                  ]
+                ],
+                "title": "Buffer Delay",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "period": 300,
+                "stat": "Average",
+                "yAxis": {
+                  "left": {
+                    "showUnits": false,
+                    "label": "min",
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 14,
+              "x": 6,
+              "type": "metric",
+              "properties": {
+                "title": "Payload Size",
+                "metrics": [
+                  [
+                    "AWS/SQS",
+                    "SentMessageSize",
+                    "QueueName",
+                    "${BufferQueue.QueueName}",
+                    {
+                      "stat": "Average",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 2,
+              "width": 6,
+              "y": 0,
+              "x": 12,
+              "type": "text",
+              "properties": {
+                "markdown": "# Lambda Function"
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 2,
+              "x": 12,
+              "type": "metric",
+              "properties": {
+                "title": "Invocations",
+                "metrics": [
+                  [
+                    "AWS/Lambda",
+                    "Invocations",
+                    "FunctionName",
+                    "${DltFunction}",
+                    {
+                      "stat": "Sum",
+                      "period": 60
+                    }
+                  ],
+                  [
+                    ".",
+                    "Errors",
+                    ".",
+                    ".",
+                    {
+                      "stat": "Sum",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": true,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 8,
+              "x": 12,
+              "type": "metric",
+              "properties": {
+                "title": "Concurrency",
+                "metrics": [
+                  [
+                    "AWS/Lambda",
+                    "ConcurrentExecutions",
+                    "FunctionName",
+                    "${DltFunction}",
+                    {
+                      "stat": "Maximum",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "height": 6,
+              "width": 6,
+              "y": 14,
+              "x": 12,
+              "type": "metric",
+              "properties": {
+                "title": "Latency",
+                "metrics": [
+                  [
+                    "AWS/Lambda",
+                    "Duration",
+                    "FunctionName",
+                    "${DltFunction}",
+                    {
+                      "stat": "Average",
+                      "period": 60
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "eu-central-1",
+                "yAxis": {
+                  "left": {
+                      "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 22,
+              "width": 18,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/dlt-sqs-snowflake-test-loader' | fields @timestamp, @message, @logStream, @log\n| sort @timestamp desc\n| limit 10000",
+                "region": "eu-central-1",
+                "stacked": false,
+                "view": "table"
+              }
+            },
+            {
+              "height": 2,
+              "width": 18,
+              "y": 20,
+              "x": 0,
+              "type": "text",
+              "properties": {
+                "markdown": "# Lambda Logs"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  HttpApiEndpoint:
+    Description: "Http API endpoint for dlt-sqs-snowflake-test-loader Lambda function"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/collect"
+

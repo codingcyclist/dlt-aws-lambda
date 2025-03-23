@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "dlt-aws-sqs-lambda-athena"
+version = "0.1.0"
+description = ""
+authors = ["codingcyclist <mail@codingcyclist.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+dlt = {version = "=1.3.0", extras = ["s3", "snowflake"]}
+aws-lambda-powertools = "^2.42.0"
+boto3 = "^1.34.152"
+aws-xray-sdk = "^2.14.0"
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
